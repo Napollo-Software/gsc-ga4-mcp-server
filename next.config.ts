@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["google-auth-library"],
+  /* config options here */
 };
 
 export default nextConfig;

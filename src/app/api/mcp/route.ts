@@ -109,6 +109,39 @@ const handler = createMcpHandler(
       }
     );
 
+    server.tool(
+      "gsc_batch_inspect_urls",
+      "Inspect indexing status of multiple URLs to find 'Why pages aren't indexed'",
+      {
+        siteUrl: z.string().describe("The property URL (e.g. sc-domain:example.com)"),
+        urls: z.array(z.string()).describe("Array of URLs to inspect"),
+      },
+      async ({ siteUrl, urls }) => {
+        const results = [];
+        for (const url of urls) {
+          const res = await safeCall(() => searchconsole.urlInspection.index.inspect({
+            requestBody: { inspectionUrl: url, siteUrl, languageCode: "en-US" },
+          }));
+          if (res.error) {
+            results.push({ url, error: res.error });
+          } else {
+            const status = res.data.inspectionResult?.indexStatusResult;
+            results.push({
+              url,
+              verdict: status?.verdict,
+              coverageState: status?.coverageState,
+              indexingState: status?.indexingState,
+              lastCrawlTime: status?.lastCrawlTime,
+              googleCanonical: status?.googleCanonical,
+            });
+          }
+          // Small delay to avoid Google API rate limits
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+        return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+      }
+    );
+
     // NEW TOOL: Request Indexing
     server.tool(
       "gsc_request_indexing",

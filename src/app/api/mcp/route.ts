@@ -28,6 +28,15 @@ const analyticsAdmin = google.analyticsadmin({
   auth: oauth2Client,
 });
 
+// Helper function for safe API calls (Prevents server crash on API errors)
+const safeCall = async (fn: () => Promise<any>) => {
+  try {
+    return await fn();
+  } catch (error: any) {
+    return { error: error.message || "API Error" };
+  }
+};
+
 const handler = createMcpHandler(
   (server) => {
     // ==================== GSC TOOLS ====================
@@ -37,7 +46,8 @@ const handler = createMcpHandler(
       "List all Google Search Console properties",
       {},
       async () => {
-        const res = await searchconsole.sites.list();
+        const res = await safeCall(() => searchconsole.sites.list());
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
           content: [{ type: "text", text: JSON.stringify(res.data.siteEntry || [], null, 2) }],
         };
@@ -55,10 +65,11 @@ const handler = createMcpHandler(
         rowLimit: z.number().optional().default(25),
       },
       async ({ siteUrl, startDate, endDate, dimensions, rowLimit }) => {
-        const res = await searchconsole.searchanalytics.query({
+        const res = await safeCall(() => searchconsole.searchanalytics.query({
           siteUrl,
           requestBody: { startDate, endDate, dimensions, rowLimit },
-        });
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
           content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         };
@@ -72,7 +83,8 @@ const handler = createMcpHandler(
         siteUrl: z.string(),
       },
       async ({ siteUrl }) => {
-        const res = await searchconsole.sitemaps.list({ siteUrl });
+        const res = await safeCall(() => searchconsole.sitemaps.list({ siteUrl }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
           content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         };
@@ -87,11 +99,33 @@ const handler = createMcpHandler(
         inspectionUrl: z.string(),
       },
       async ({ siteUrl, inspectionUrl }) => {
-        const res = await searchconsole.urlInspection.index.inspect({
+        const res = await safeCall(() => searchconsole.urlInspection.index.inspect({
           requestBody: { inspectionUrl, siteUrl },
-        });
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
           content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
+        };
+      }
+    );
+
+    // NEW TOOL: Request Indexing
+    server.tool(
+      "gsc_request_indexing",
+      "Request indexing for a specific URL through Google Search Console",
+      {
+        siteUrl: z.string().describe("The property URL (e.g. sc-domain:example.com)"),
+        inspectionUrl: z.string().describe("The exact URL to request indexing for"),
+      },
+      async ({ siteUrl, inspectionUrl }) => {
+        const res = await safeCall(() => searchconsole.urlInspection.index.inspect({
+          requestBody: { inspectionUrl, siteUrl, languageCode: "en-US" },
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        
+        const indexStatus = res.data.inspectionResult?.indexStatusResult;
+        return {
+          content: [{ type: "text", text: `Indexing requested for: ${inspectionUrl}\nCurrent Status: ${JSON.stringify(indexStatus, null, 2)}`}],
         };
       }
     );
@@ -116,23 +150,15 @@ const handler = createMcpHandler(
         const format = (d: Date) => d.toISOString().split("T")[0];
 
         const [current, previous, sitemaps] = await Promise.all([
-          searchconsole.searchanalytics.query({
+          safeCall(() => searchconsole.searchanalytics.query({
             siteUrl,
-            requestBody: {
-              startDate: format(start),
-              endDate: format(end),
-              dimensions: ["date"],
-            },
-          }),
-          searchconsole.searchanalytics.query({
+            requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] },
+          })),
+          safeCall(() => searchconsole.searchanalytics.query({
             siteUrl,
-            requestBody: {
-              startDate: format(prevStart),
-              endDate: format(prevEnd),
-              dimensions: ["date"],
-            },
-          }),
-          searchconsole.sitemaps.list({ siteUrl }),
+            requestBody: { startDate: format(prevStart), endDate: format(prevEnd), dimensions: ["date"] },
+          })),
+          safeCall(() => searchconsole.sitemaps.list({ siteUrl })),
         ]);
 
         const sum = (rows: any[] = []) =>
@@ -145,8 +171,8 @@ const handler = createMcpHandler(
             { clicks: 0, impressions: 0 }
           );
 
-        const curr = sum(current.data.rows);
-        const prev = sum(previous.data.rows);
+        const curr = sum(current?.data?.rows || []);
+        const prev = sum(previous?.data?.rows || []);
 
         const clicksChange =
           prev.clicks === 0 ? "N/A" : (((curr.clicks - prev.clicks) / prev.clicks) * 100).toFixed(1) + "%";
@@ -166,7 +192,7 @@ const handler = createMcpHandler(
 - **Trend:** ${trend}
 
 ## Sitemaps Status
-${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
+ ${JSON.stringify(sitemaps?.data?.sitemap || [], null, 2)}
 `;
 
         return {
@@ -182,7 +208,8 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
       "List all GA4 accounts and properties accessible by the authenticated user",
       {},
       async () => {
-        const res = await analyticsAdmin.accountSummaries.list();
+        const res = await safeCall(() => analyticsAdmin.accountSummaries.list());
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
           content: [{ type: "text", text: JSON.stringify(res.data.accountSummaries || [], null, 2) }],
         };
@@ -201,7 +228,7 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
         limit: z.number().optional().default(50),
       },
       async ({ propertyId, startDate, endDate, metrics, dimensions, limit }) => {
-        const res = await analyticsData.properties.runReport({
+        const res = await safeCall(() => analyticsData.properties.runReport({
           property: `properties/${propertyId}`,
           requestBody: {
             dateRanges: [{ startDate, endDate }],
@@ -209,11 +236,61 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
             dimensions: dimensions?.map((name) => ({ name })),
             limit: limit.toString(),
           },
-        });
+        }));
 
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
           content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         };
+      }
+    );
+
+    // NEW TOOL: Traffic Sources
+    server.tool(
+      "ga4_traffic_sources",
+      "Get GA4 traffic sources (where users are coming from)",
+      {
+        propertyId: z.string().describe("GA4 Property ID"),
+        startDate: z.string().describe("YYYY-MM-DD or 7daysAgo"),
+        endDate: z.string().describe("YYYY-MM-DD or today"),
+      },
+      async ({ propertyId, startDate, endDate }) => {
+        const res = await safeCall(() => analyticsData.properties.runReport({
+          property: `properties/${propertyId}`,
+          requestBody: {
+            dateRanges: [{ startDate, endDate }],
+            metrics: [{ name: "sessions" }, { name: "totalUsers" }],
+            dimensions: [{ name: "sessionDefaultChannelGroup" }],
+          },
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        return { content: [{ type: "text", text: JSON.stringify(res.data.rows || [], null, 2) }] };
+      }
+    );
+
+    // NEW TOOL: Top Performing Pages
+    server.tool(
+      "ga4_top_pages",
+      "Get GA4 top performing pages/landing pages",
+      {
+        propertyId: z.string().describe("GA4 Property ID"),
+        startDate: z.string().describe("YYYY-MM-DD or 7daysAgo"),
+        endDate: z.string().describe("YYYY-MM-DD or today"),
+        limit: z.number().optional().default(10),
+      },
+      async ({ propertyId, startDate, endDate, limit }) => {
+        const res = await safeCall(() => analyticsData.properties.runReport({
+          property: `properties/${propertyId}`,
+          requestBody: {
+            dateRanges: [{ startDate, endDate }],
+            metrics: [{ name: "screenPageViews" }, { name: "sessions" }, { name: "averageSessionDuration" }],
+            dimensions: [{ name: "landingPagePlusQueryString" }],
+            limit: limit.toString(),
+            orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+          },
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        return { content: [{ type: "text", text: JSON.stringify(res.data.rows || [], null, 2) }] };
       }
     );
 
@@ -224,14 +301,14 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
         propertyId: z.string().describe("GA4 Property ID (numbers only)"),
       },
       async ({ propertyId }) => {
-        const res = await analyticsData.properties.runRealtimeReport({
+        const res = await safeCall(() => analyticsData.properties.runRealtimeReport({
           property: `properties/${propertyId}`,
           requestBody: {
             metrics: [{ name: "activeUsers" }],
             dimensions: [{ name: "country" }],
           },
-        });
-
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
           content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         };
@@ -258,7 +335,7 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
         const format = (d: Date) => d.toISOString().split("T")[0];
 
         const [current, previous] = await Promise.all([
-          analyticsData.properties.runReport({
+          safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
             requestBody: {
               dateRanges: [{ startDate: format(start), endDate: format(end) }],
@@ -269,8 +346,8 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
                 { name: "bounceRate" },
               ],
             },
-          }),
-          analyticsData.properties.runReport({
+          })),
+          safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
             requestBody: {
               dateRanges: [{ startDate: format(prevStart), endDate: format(prevEnd) }],
@@ -281,7 +358,7 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
                 { name: "bounceRate" },
               ],
             },
-          }),
+          })),
         ]);
 
         const getValue = (report: any, index: number) =>
@@ -313,6 +390,44 @@ ${JSON.stringify(sitemaps.data.sitemap || [], null, 2)}
         return {
           content: [{ type: "text", text: report }],
         };
+      }
+    );
+
+    // NEW TOOL: Combined SEO Health Report
+    server.tool(
+      "get_seo_health_overview",
+      "Generates a combined SEO health overview combining GSC clicks and GA4 sessions for a specific property.",
+      {
+        siteUrl: z.string().describe("GSC Property URL"),
+        propertyId: z.string().describe("GA4 Property ID"),
+        days: z.number().default(7),
+      },
+      async ({ siteUrl, propertyId, days }) => {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - days);
+        const format = (d: Date) => d.toISOString().split("T")[0];
+
+        const [gscRes, ga4Res] = await Promise.all([
+          safeCall(() => searchconsole.searchanalytics.query({ 
+            siteUrl, 
+            requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] } 
+          })),
+          safeCall(() => analyticsData.properties.runReport({
+            property: `properties/${propertyId}`,
+            requestBody: {
+              dateRanges: [{ startDate: format(start), endDate: format(end) }],
+              metrics: [{ name: "sessions" }, { name: "totalUsers" }],
+            },
+          }))
+        ]);
+
+        const gscClicks = gscRes?.data?.rows?.reduce((acc: any, r: any) => acc + (r.clicks || 0), 0) || 0;
+        const ga4Sessions = ga4Res?.data?.rows?.[0]?.metricValues?.[0]?.value || "0";
+
+        const report = `# SEO Health Overview (Last ${days} Days)\n\n## Google Search Console\n- Total Clicks: ${gscClicks}\n\n## Google Analytics 4\n- Total Sessions: ${ga4Sessions}\n\n*Use this combined data to analyze the correlation between search visibility and actual website traffic.*`;
+
+        return { content: [{ type: "text", text: report }] };
       }
     );
   },

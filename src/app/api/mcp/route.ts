@@ -141,6 +141,86 @@ const handler = createMcpHandler(
         return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
       }
     );
+    
+        // ==================== TRACKING VERIFICATION TOOLS ====================
+
+    // 1. Verify GA4 Data Streams & Enhanced Measurement
+    server.tool(
+      "verify_ga4_tracking_config",
+      "Verify GA4 Data Streams, Enhanced Measurement, Cross-domain, and Unwanted Referrals settings",
+      {
+        propertyId: z.string().describe("GA4 Property ID (numbers only)"),
+      },
+      async ({ propertyId }) => {
+        const res = await safeCall(() => analyticsAdmin.properties.dataStreams.list({
+          parent: `properties/${propertyId}`,
+        }));
+        
+        if (res.error) return { content: [{ type: "text", text: `Verification Failed: Requires GA4 Admin API access. Error: ${res.error}` }] };
+
+        const streams = res.data.dataStreams || [];
+        if (streams.length === 0) {
+          return { content: [{ type: "text", text: "No data streams found. Not verified." }] };
+        }
+
+        const streamData = streams.map(stream => {
+          const webStream = stream.webStreamData;
+          return {
+            streamName: stream.displayName,
+            streamId: stream.webStreamData?.streamId,
+            enhancedMeasurement: webStream?.enhancedMeasurementSettings,
+            internalTrafficFilter: "Requires Data Filters check (API limit)",
+            crossDomainMeasurement: webStream?.enhancedMeasurementSettings?.crossDomainMeasurementEnabled ? "Enabled" : "Disabled",
+            unwantedReferrals: "Requires stream configuration manual check"
+          };
+        });
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(streamData, null, 2) }],
+        };
+      }
+    );
+
+    // 2. Verify GA4 Product Links (BigQuery, Ads, Search Console)
+    server.tool(
+      "verify_ga4_product_links",
+      "Verify GA4 Product Links (BigQuery, Google Ads, Search Console)",
+      {
+        propertyId: z.string().describe("GA4 Property ID (numbers only)"),
+      },
+      async ({ propertyId }) => {
+        const [bqRes, adsRes] = await Promise.all([
+          safeCall(() => analyticsAdmin.properties.bigQueryLinks.list({ parent: `properties/${propertyId}` })),
+          safeCall(() => analyticsAdmin.properties.googleAdsLinks.list({ parent: `properties/${propertyId}` }))
+        ]);
+
+        const links = {
+          bigQueryLinks: bqRes.data?.bigQueryLinks || "Not linked",
+          googleAdsLinks: adsRes.data?.googleAdsLinks || "Not linked",
+          searchConsoleLinks: "Requires GSC API cross-check (Use gsc_list_sites)"
+        };
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(links, null, 2) }],
+        };
+      }
+    );
+
+    // 3. Verify GTM Container State
+    server.tool(
+      "verify_gtm_container",
+      "Verify GTM tags, triggers, consent and publish state",
+      {},
+      async () => {
+        // GTM API requires separate authentication and scopes not present in default GSC/GA4 OAuth.
+        return {
+          content: [{ 
+            type: "text", 
+            text: "Not verified: No GTM container access or export was available. Requires GTM API integration or manual export." 
+          }],
+        };
+      }
+    );
 
     // NEW TOOL: Request Indexing
     server.tool(

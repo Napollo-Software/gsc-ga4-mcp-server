@@ -67,9 +67,7 @@ const handler = createMcpHandler(
 
         const res = await safeCall(() => searchconsole.sites.list());
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return {
-          content: [{ type: "text", text: JSON.stringify(res.data.siteEntry || [], null, 2) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify(res.data.siteEntry || [], null, 2) }] };
       }
     );
 
@@ -93,9 +91,7 @@ const handler = createMcpHandler(
           requestBody: { startDate, endDate, dimensions, rowLimit },
         }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return {
-          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
       }
     );
 
@@ -112,9 +108,7 @@ const handler = createMcpHandler(
 
         const res = await safeCall(() => searchconsole.sitemaps.list({ siteUrl }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return {
-          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
       }
     );
 
@@ -134,9 +128,7 @@ const handler = createMcpHandler(
           requestBody: { inspectionUrl, siteUrl },
         }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return {
-          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
       }
     );
 
@@ -194,9 +186,7 @@ const handler = createMcpHandler(
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         
         const indexStatus = res.data.inspectionResult?.indexStatusResult;
-        return {
-          content: [{ type: "text", text: `Indexing requested for: ${inspectionUrl}\nCurrent Status: ${JSON.stringify(indexStatus, null, 2)}`}],
-        };
+        return { content: [{ type: "text", text: `Indexing requested for: ${inspectionUrl}\nCurrent Status: ${JSON.stringify(indexStatus, null, 2)}` }] };
       }
     );
 
@@ -224,24 +214,12 @@ const handler = createMcpHandler(
         const format = (d: Date) => d.toISOString().split("T")[0];
 
         const [current, previous, sitemaps] = await Promise.all([
-          safeCall(() => searchconsole.searchanalytics.query({
-            siteUrl,
-            requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] },
-          })),
-          safeCall(() => searchconsole.searchanalytics.query({
-            siteUrl,
-            requestBody: { startDate: format(prevStart), endDate: format(prevEnd), dimensions: ["date"] },
-          })),
+          safeCall(() => searchconsole.searchanalytics.query({ siteUrl, requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] } })),
+          safeCall(() => searchconsole.searchanalytics.query({ siteUrl, requestBody: { startDate: format(prevStart), endDate: format(prevEnd), dimensions: ["date"] } })),
           safeCall(() => searchconsole.sitemaps.list({ siteUrl })),
         ]);
 
-        const sum = (rows: any[] = []) =>
-          rows.reduce((acc: any, r: any) => {
-            acc.clicks += r.clicks || 0;
-            acc.impressions += r.impressions || 0;
-            return acc;
-          }, { clicks: 0, impressions: 0 });
-
+        const sum = (rows: any[] = []) => rows.reduce((acc: any, r: any) => { acc.clicks += r.clicks || 0; acc.impressions += r.impressions || 0; return acc; }, { clicks: 0, impressions: 0 });
         const curr = sum(current?.data?.rows || []);
         const prev = sum(previous?.data?.rows || []);
 
@@ -268,16 +246,11 @@ const handler = createMcpHandler(
         const authError = checkAuth(secretCode);
         if (authError) return authError;
 
-        const res = await safeCall(() => (analyticsAdmin.properties as any).dataStreams.list({
-          parent: `properties/${propertyId}`,
-        }));
-        
+        const res = await safeCall(() => (analyticsAdmin.properties as any).dataStreams.list({ parent: `properties/${propertyId}` }));
         if (res.error) return { content: [{ type: "text", text: `Verification Failed: Requires GA4 Admin API access. Error: ${res.error}` }] };
 
         const streams = res.data.dataStreams || [];
-        if (streams.length === 0) {
-          return { content: [{ type: "text", text: "No data streams found. Not verified." }] };
-        }
+        if (streams.length === 0) return { content: [{ type: "text", text: "No data streams found. Not verified." }] };
 
         const streamData = streams.map((stream: any) => {
           const webStream = stream.webStreamData;
@@ -337,30 +310,20 @@ const handler = createMcpHandler(
         const results: any = { accountUsers: [], propertyUsers: [] };
 
         if (accountId) {
-          const accRes = await safeCall(() => (analyticsAdmin.accounts as any).userLinks.list({
-            parent: `accounts/${accountId}`,
-          }));
+          const accRes = await safeCall(() => (analyticsAdmin.accounts as any).userLinks.list({ parent: `accounts/${accountId}` }));
           if (accRes.error) {
             results.accountUsers = `Error: ${accRes.error}`;
           } else {
-            results.accountUsers = (accRes.data.userLinks || []).map((link: any) => ({
-              email: link.emailAddress,
-              role: link.directRoles || ["Unknown"],
-            }));
+            results.accountUsers = (accRes.data.userLinks || []).map((link: any) => ({ email: link.emailAddress, role: link.directRoles || ["Unknown"] }));
           }
         }
 
         if (propertyId) {
-          const propRes = await safeCall(() => (analyticsAdmin.properties as any).userLinks.list({
-            parent: `properties/${propertyId}`,
-          }));
+          const propRes = await safeCall(() => (analyticsAdmin.properties as any).userLinks.list({ parent: `properties/${propertyId}` }));
           if (propRes.error) {
             results.propertyUsers = `Error: ${propRes.error}`;
           } else {
-            results.propertyUsers = (propRes.data.userLinks || []).map((link: any) => ({
-              email: link.emailAddress,
-              role: link.directRoles || ["Unknown"],
-            }));
+            results.propertyUsers = (propRes.data.userLinks || []).map((link: any) => ({ email: link.emailAddress, role: link.directRoles || ["Unknown"] }));
           }
         }
 
@@ -390,14 +353,7 @@ const handler = createMcpHandler(
           const contRes = await safeCall(() => (tagmanager.accounts as any).containers.list({ parent: acc.path }));
           if (!contRes.error && contRes.data.container) {
             contRes.data.container.forEach((cont: any) => {
-              result.push({
-                accountId: acc.accountId,
-                accountName: acc.name,
-                containerId: cont.containerId,
-                containerName: cont.name,
-                path: cont.path,
-                publicId: cont.publicId
-              });
+              result.push({ accountId: acc.accountId, accountName: acc.name, containerId: cont.containerId, containerName: cont.name, path: cont.path, publicId: cont.publicId });
             });
           }
         }
@@ -417,18 +373,10 @@ const handler = createMcpHandler(
         const authError = checkAuth(secretCode);
         if (authError) return authError;
 
-        const res = await safeCall(() => (tagmanager.accounts.containers.workspaces as any).tags.list({
-          parent: workspacePath,
-        }));
+        const res = await safeCall(() => (tagmanager.accounts.containers.workspaces as any).tags.list({ parent: workspacePath }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         
-        const tags = (res.data.tag || []).map((tag: any) => ({
-          name: tag.name,
-          type: tag.type,
-          firingTriggerId: tag.firingTriggerId,
-          blockingTriggerId: tag.blockingTriggerId,
-          tagFiringOption: tag.tagFiringOption
-        }));
+        const tags = (res.data.tag || []).map((tag: any) => ({ name: tag.name, type: tag.type, firingTriggerId: tag.firingTriggerId, blockingTriggerId: tag.blockingTriggerId, tagFiringOption: tag.tagFiringOption }));
 
         return { content: [{ type: "text", text: JSON.stringify(tags, null, 2) }] };
       }
@@ -445,9 +393,7 @@ const handler = createMcpHandler(
         const authError = checkAuth(secretCode);
         if (authError) return authError;
 
-        const res = await safeCall(() => (tagmanager.accounts.containers.workspaces as any).publish({
-          path: workspacePath,
-        }));
+        const res = await safeCall(() => (tagmanager.accounts.containers.workspaces as any).publish({ path: workspacePath }));
         if (res.error) return { content: [{ type: "text", text: `Error publishing: ${res.error}` }] };
         
         return { content: [{ type: "text", text: `Successfully published workspace: ${workspacePath}\nVersion: ${res.data.containerVersion?.name || 'New Version'}` }] };
@@ -465,13 +411,9 @@ const handler = createMcpHandler(
         if (authError) return authError;
 
         const res = await safeCall(() => tagmanager.accounts.list());
-        if (res.error) {
-          return { content: [{ type: "text", text: "Not verified: No GTM container access or export was available. Requires GTM API integration." }] };
-        }
+        if (res.error) return { content: [{ type: "text", text: "Not verified: No GTM container access or export was available. Requires GTM API integration." }] };
         const accounts = res.data.account || [];
-        if (accounts.length === 0) {
-          return { content: [{ type: "text", text: "Not verified: No GTM accounts found." }] };
-        }
+        if (accounts.length === 0) return { content: [{ type: "text", text: "Not verified: No GTM accounts found." }] };
         return { content: [{ type: "text", text: `Verified: Found ${accounts.length} GTM Account(s). Use gtm_list_containers for details.` }] };
       }
     );
@@ -490,9 +432,7 @@ const handler = createMcpHandler(
 
         const res = await safeCall(() => analyticsAdmin.accountSummaries.list());
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return {
-          content: [{ type: "text", text: JSON.stringify(res.data.accountSummaries || [], null, 2) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify(res.data.accountSummaries || [], null, 2) }] };
       }
     );
 
@@ -523,9 +463,7 @@ const handler = createMcpHandler(
         }));
 
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return {
-          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
       }
     );
 
@@ -603,9 +541,7 @@ const handler = createMcpHandler(
           },
         }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return {
-          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
       }
     );
 
@@ -635,32 +571,15 @@ const handler = createMcpHandler(
         const [current, previous] = await Promise.all([
           safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
-            requestBody: {
-              dateRanges: [{ startDate: format(start), endDate: format(end) }],
-              metrics: [
-                { name: "sessions" },
-                { name: "totalUsers" },
-                { name: "screenPageViews" },
-                { name: "bounceRate" },
-              ],
-            },
+            requestBody: { dateRanges: [{ startDate: format(start), endDate: format(end) }], metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "screenPageViews" }, { name: "bounceRate" }] },
           })),
           safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
-            requestBody: {
-              dateRanges: [{ startDate: format(prevStart), endDate: format(prevEnd) }],
-              metrics: [
-                { name: "sessions" },
-                { name: "totalUsers" },
-                { name: "screenPageViews" },
-                { name: "bounceRate" },
-              ],
-            },
+            requestBody: { dateRanges: [{ startDate: format(prevStart), endDate: format(prevEnd) }], metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "screenPageViews" }, { name: "bounceRate" }] },
           })),
         ]);
 
-        const getValue = (report: any, index: number) =>
-          Number(report?.data?.rows?.[0]?.metricValues?.[index]?.value || 0);
+        const getValue = (report: any, index: number) => Number(report?.data?.rows?.[0]?.metricValues?.[index]?.value || 0);
 
         const currSessions = getValue(current, 0);
         const prevSessions = getValue(previous, 0);
@@ -696,16 +615,10 @@ const handler = createMcpHandler(
         const format = (d: Date) => d.toISOString().split("T")[0];
 
         const [gscRes, ga4Res] = await Promise.all([
-          safeCall(() => searchconsole.searchanalytics.query({ 
-            siteUrl, 
-            requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] } 
-          })),
+          safeCall(() => searchconsole.searchanalytics.query({ siteUrl, requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] } })),
           safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
-            requestBody: {
-              dateRanges: [{ startDate: format(start), endDate: format(end) }],
-              metrics: [{ name: "sessions" }, { name: "totalUsers" }],
-            },
+            requestBody: { dateRanges: [{ startDate: format(start), endDate: format(end) }], metrics: [{ name: "sessions" }, { name: "totalUsers" }] },
           }))
         ]);
 

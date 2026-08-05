@@ -28,8 +28,14 @@ const analyticsAdmin = google.analyticsadmin({
   auth: oauth2Client,
 });
 
-// Helper function for safe API calls (Prevents server crash on API errors)
-const safeCall = async (fn: () => Promise<any>) => {
+// ========== GTM ==========
+const tagmanager = google.tagmanager({
+  version: "v2",
+  auth: oauth2Client,
+});
+
+// Helper function for safe API calls
+const safeCall = async (fn: () => Promise<any>): Promise<any> => {
   try {
     return await fn();
   } catch (error: any) {
@@ -38,7 +44,7 @@ const safeCall = async (fn: () => Promise<any>) => {
 };
 
 const handler = createMcpHandler(
-  (server) => {
+  (server: any) => {
     // ==================== GSC TOOLS ====================
 
     server.tool(
@@ -64,7 +70,7 @@ const handler = createMcpHandler(
         dimensions: z.array(z.enum(["query", "page", "country", "device", "date"])).optional().default(["query"]),
         rowLimit: z.number().optional().default(25),
       },
-      async ({ siteUrl, startDate, endDate, dimensions, rowLimit }) => {
+      async ({ siteUrl, startDate, endDate, dimensions, rowLimit }: any) => {
         const res = await safeCall(() => searchconsole.searchanalytics.query({
           siteUrl,
           requestBody: { startDate, endDate, dimensions, rowLimit },
@@ -82,7 +88,7 @@ const handler = createMcpHandler(
       {
         siteUrl: z.string(),
       },
-      async ({ siteUrl }) => {
+      async ({ siteUrl }: any) => {
         const res = await safeCall(() => searchconsole.sitemaps.list({ siteUrl }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         return {
@@ -98,7 +104,7 @@ const handler = createMcpHandler(
         siteUrl: z.string(),
         inspectionUrl: z.string(),
       },
-      async ({ siteUrl, inspectionUrl }) => {
+      async ({ siteUrl, inspectionUrl }: any) => {
         const res = await safeCall(() => searchconsole.urlInspection.index.inspect({
           requestBody: { inspectionUrl, siteUrl },
         }));
@@ -116,8 +122,8 @@ const handler = createMcpHandler(
         siteUrl: z.string().describe("The property URL (e.g. sc-domain:example.com)"),
         urls: z.array(z.string()).describe("Array of URLs to inspect"),
       },
-      async ({ siteUrl, urls }) => {
-        const results = [];
+      async ({ siteUrl, urls }: any) => {
+        const results: any[] = [];
         for (const url of urls) {
           const res = await safeCall(() => searchconsole.urlInspection.index.inspect({
             requestBody: { inspectionUrl: url, siteUrl, languageCode: "en-US" },
@@ -135,94 +141,12 @@ const handler = createMcpHandler(
               googleCanonical: status?.googleCanonical,
             });
           }
-          // Small delay to avoid Google API rate limits
           await new Promise((resolve) => setTimeout(resolve, 200));
         }
         return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
       }
     );
-    
-        // ==================== TRACKING VERIFICATION TOOLS ====================
 
-    // 1. Verify GA4 Data Streams & Enhanced Measurement
-    server.tool(
-      "verify_ga4_tracking_config",
-      "Verify GA4 Data Streams, Enhanced Measurement, Cross-domain, and Unwanted Referrals settings",
-      {
-        propertyId: z.string().describe("GA4 Property ID (numbers only)"),
-      },
-      async ({ propertyId }) => {
-        const res = await safeCall(() => analyticsAdmin.properties.dataStreams.list({
-          parent: `properties/${propertyId}`,
-        }));
-        
-        if (res.error) return { content: [{ type: "text", text: `Verification Failed: Requires GA4 Admin API access. Error: ${res.error}` }] };
-
-        const streams = res.data.dataStreams || [];
-        if (streams.length === 0) {
-          return { content: [{ type: "text", text: "No data streams found. Not verified." }] };
-        }
-
-        const streamData = streams.map(stream => {
-          const webStream = stream.webStreamData;
-          return {
-            streamName: stream.displayName,
-            streamId: stream.webStreamData?.streamId,
-            enhancedMeasurement: webStream?.enhancedMeasurementSettings,
-            internalTrafficFilter: "Requires Data Filters check (API limit)",
-            crossDomainMeasurement: webStream?.enhancedMeasurementSettings?.crossDomainMeasurementEnabled ? "Enabled" : "Disabled",
-            unwantedReferrals: "Requires stream configuration manual check"
-          };
-        });
-
-        return {
-          content: [{ type: "text", text: JSON.stringify(streamData, null, 2) }],
-        };
-      }
-    );
-
-    // 2. Verify GA4 Product Links (BigQuery, Ads, Search Console)
-    server.tool(
-      "verify_ga4_product_links",
-      "Verify GA4 Product Links (BigQuery, Google Ads, Search Console)",
-      {
-        propertyId: z.string().describe("GA4 Property ID (numbers only)"),
-      },
-      async ({ propertyId }) => {
-        const [bqRes, adsRes] = await Promise.all([
-          safeCall(() => analyticsAdmin.properties.bigQueryLinks.list({ parent: `properties/${propertyId}` })),
-          safeCall(() => analyticsAdmin.properties.googleAdsLinks.list({ parent: `properties/${propertyId}` }))
-        ]);
-
-        const links = {
-          bigQueryLinks: bqRes.data?.bigQueryLinks || "Not linked",
-          googleAdsLinks: adsRes.data?.googleAdsLinks || "Not linked",
-          searchConsoleLinks: "Requires GSC API cross-check (Use gsc_list_sites)"
-        };
-
-        return {
-          content: [{ type: "text", text: JSON.stringify(links, null, 2) }],
-        };
-      }
-    );
-
-    // 3. Verify GTM Container State
-    server.tool(
-      "verify_gtm_container",
-      "Verify GTM tags, triggers, consent and publish state",
-      {},
-      async () => {
-        // GTM API requires separate authentication and scopes not present in default GSC/GA4 OAuth.
-        return {
-          content: [{ 
-            type: "text", 
-            text: "Not verified: No GTM container access or export was available. Requires GTM API integration or manual export." 
-          }],
-        };
-      }
-    );
-
-    // NEW TOOL: Request Indexing
     server.tool(
       "gsc_request_indexing",
       "Request indexing for a specific URL through Google Search Console",
@@ -230,7 +154,7 @@ const handler = createMcpHandler(
         siteUrl: z.string().describe("The property URL (e.g. sc-domain:example.com)"),
         inspectionUrl: z.string().describe("The exact URL to request indexing for"),
       },
-      async ({ siteUrl, inspectionUrl }) => {
+      async ({ siteUrl, inspectionUrl }: any) => {
         const res = await safeCall(() => searchconsole.urlInspection.index.inspect({
           requestBody: { inspectionUrl, siteUrl, languageCode: "en-US" },
         }));
@@ -250,7 +174,7 @@ const handler = createMcpHandler(
         siteUrl: z.string().describe("sc-domain:example.com or https://example.com/"),
         days: z.number().default(28),
       },
-      async ({ siteUrl, days }) => {
+      async ({ siteUrl, days }: any) => {
         const end = new Date();
         const start = new Date();
         start.setDate(end.getDate() - days);
@@ -275,42 +199,213 @@ const handler = createMcpHandler(
         ]);
 
         const sum = (rows: any[] = []) =>
-          rows.reduce(
-            (acc, r) => {
-              acc.clicks += r.clicks || 0;
-              acc.impressions += r.impressions || 0;
-              return acc;
-            },
-            { clicks: 0, impressions: 0 }
-          );
+          rows.reduce((acc: any, r: any) => {
+            acc.clicks += r.clicks || 0;
+            acc.impressions += r.impressions || 0;
+            return acc;
+          }, { clicks: 0, impressions: 0 });
 
         const curr = sum(current?.data?.rows || []);
         const prev = sum(previous?.data?.rows || []);
 
-        const clicksChange =
-          prev.clicks === 0 ? "N/A" : (((curr.clicks - prev.clicks) / prev.clicks) * 100).toFixed(1) + "%";
-        const imprChange =
-          prev.impressions === 0 ? "N/A" : (((curr.impressions - prev.impressions) / prev.impressions) * 100).toFixed(1) + "%";
-
+        const clicksChange = prev.clicks === 0 ? "N/A" : (((curr.clicks - prev.clicks) / prev.clicks) * 100).toFixed(1) + "%";
+        const imprChange = prev.impressions === 0 ? "N/A" : (((curr.impressions - prev.impressions) / prev.impressions) * 100).toFixed(1) + "%";
         const trend = Number(clicksChange) > 0 ? "UP ↑" : Number(clicksChange) < 0 ? "DOWN ↓" : "STABLE →";
 
-        const report = `# Search Console Client Report
+        const report = `# Search Console Client Report\n\n**Site:** ${siteUrl}\n**Period:** Last ${days} days vs previous ${days} days\n\n## Performance Trend\n- **Clicks:** ${curr.clicks.toLocaleString()} (${clicksChange})\n- **Impressions:** ${curr.impressions.toLocaleString()} (${imprChange})\n- **Trend:** ${trend}\n\n## Sitemaps Status\n${JSON.stringify(sitemaps?.data?.sitemap || [], null, 2)}\n`;
 
-**Site:** ${siteUrl}
-**Period:** Last ${days} days vs previous ${days} days
+        return { content: [{ type: "text", text: report }] };
+      }
+    );
 
-## Performance Trend
-- **Clicks:** ${curr.clicks.toLocaleString()} (${clicksChange})
-- **Impressions:** ${curr.impressions.toLocaleString()} (${imprChange})
-- **Trend:** ${trend}
+    // ==================== TRACKING VERIFICATION TOOLS ====================
 
-## Sitemaps Status
- ${JSON.stringify(sitemaps?.data?.sitemap || [], null, 2)}
-`;
+    server.tool(
+      "verify_ga4_tracking_config",
+      "Verify GA4 Data Streams, Enhanced Measurement, Cross-domain, and Unwanted Referrals settings",
+      {
+        propertyId: z.string().describe("GA4 Property ID (numbers only)"),
+      },
+      async ({ propertyId }: any) => {
+        const res = await safeCall(() => (analyticsAdmin.properties as any).dataStreams.list({
+          parent: `properties/${propertyId}`,
+        }));
+        
+        if (res.error) return { content: [{ type: "text", text: `Verification Failed: Requires GA4 Admin API access. Error: ${res.error}` }] };
 
-        return {
-          content: [{ type: "text", text: report }],
+        const streams = res.data.dataStreams || [];
+        if (streams.length === 0) {
+          return { content: [{ type: "text", text: "No data streams found. Not verified." }] };
+        }
+
+        const streamData = streams.map((stream: any) => {
+          const webStream = stream.webStreamData;
+          return {
+            streamName: stream.displayName,
+            streamId: stream.webStreamData?.streamId,
+            enhancedMeasurement: webStream?.enhancedMeasurementSettings,
+            internalTrafficFilter: "Requires Data Filters check (API limit)",
+            crossDomainMeasurement: webStream?.enhancedMeasurementSettings?.crossDomainMeasurementEnabled ? "Enabled" : "Disabled",
+            unwantedReferrals: "Requires stream configuration manual check"
+          };
+        });
+
+        return { content: [{ type: "text", text: JSON.stringify(streamData, null, 2) }] };
+      }
+    );
+
+    server.tool(
+      "verify_ga4_product_links",
+      "Verify GA4 Product Links (BigQuery, Google Ads, Search Console)",
+      {
+        propertyId: z.string().describe("GA4 Property ID (numbers only)"),
+      },
+      async ({ propertyId }: any) => {
+        const [bqRes, adsRes] = await Promise.all([
+          safeCall(() => (analyticsAdmin.properties as any).bigQueryLinks.list({ parent: `properties/${propertyId}` })),
+          safeCall(() => (analyticsAdmin.properties as any).googleAdsLinks.list({ parent: `properties/${propertyId}` }))
+        ]);
+
+        const links = {
+          bigQueryLinks: bqRes.data?.bigQueryLinks || "Not linked",
+          googleAdsLinks: adsRes.data?.googleAdsLinks || "Not linked",
+          searchConsoleLinks: "Requires GSC API cross-check (Use gsc_list_sites)"
         };
+
+        return { content: [{ type: "text", text: JSON.stringify(links, null, 2) }] };
+      }
+    );
+
+    // ==================== GA4 USERS LIST TOOL ====================
+    server.tool(
+      "ga4_list_users",
+      "List all users and their roles for a GA4 Account or Property",
+      {
+        accountId: z.string().optional().describe("GA4 Account ID (numbers only, e.g., 12345)"),
+        propertyId: z.string().optional().describe("GA4 Property ID (numbers only, e.g., 67890)"),
+      },
+      async ({ accountId, propertyId }: any) => {
+        const results: any = { accountUsers: [], propertyUsers: [] };
+
+        if (accountId) {
+          const accRes = await safeCall(() => (analyticsAdmin.accounts as any).userLinks.list({
+            parent: `accounts/${accountId}`,
+          }));
+          if (accRes.error) {
+            results.accountUsers = `Error: ${accRes.error}`;
+          } else {
+            results.accountUsers = (accRes.data.userLinks || []).map((link: any) => ({
+              email: link.emailAddress,
+              role: link.directRoles || ["Unknown"],
+            }));
+          }
+        }
+
+        if (propertyId) {
+          const propRes = await safeCall(() => (analyticsAdmin.properties as any).userLinks.list({
+            parent: `properties/${propertyId}`,
+          }));
+          if (propRes.error) {
+            results.propertyUsers = `Error: ${propRes.error}`;
+          } else {
+            results.propertyUsers = (propRes.data.userLinks || []).map((link: any) => ({
+              email: link.emailAddress,
+              role: link.directRoles || ["Unknown"],
+            }));
+          }
+        }
+
+        return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+      }
+    );
+
+    // ==================== GTM TOOLS ====================
+    
+    server.tool(
+      "gtm_list_containers",
+      "List all GTM accounts and containers accessible by the authenticated user",
+      {},
+      async () => {
+        const res = await safeCall(() => tagmanager.accounts.list());
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        
+        const accounts = res.data.account || [];
+        const result: any[] = [];
+
+        for (const acc of accounts) {
+          const contRes = await safeCall(() => (tagmanager.accounts as any).containers.list({ parent: acc.path }));
+          if (!contRes.error && contRes.data.container) {
+            contRes.data.container.forEach((cont: any) => {
+              result.push({
+                accountId: acc.accountId,
+                accountName: acc.name,
+                containerId: cont.containerId,
+                containerName: cont.name,
+                path: cont.path,
+                publicId: cont.publicId
+              });
+            });
+          }
+        }
+
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+    );
+
+    server.tool(
+      "gtm_list_tags",
+      "List all tags in a specific GTM Workspace",
+      {
+        workspacePath: z.string().describe("Workspace path (e.g., accounts/123/containers/456/workspaces/7)"),
+      },
+      async ({ workspacePath }: any) => {
+        const res = await safeCall(() => (tagmanager.accounts.containers.workspaces as any).tags.list({
+          parent: workspacePath,
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        
+        const tags = (res.data.tag || []).map((tag: any) => ({
+          name: tag.name,
+          type: tag.type,
+          firingTriggerId: tag.firingTriggerId,
+          blockingTriggerId: tag.blockingTriggerId,
+          tagFiringOption: tag.tagFiringOption
+        }));
+
+        return { content: [{ type: "text", text: JSON.stringify(tags, null, 2) }] };
+      }
+    );
+
+    server.tool(
+      "gtm_publish_workspace",
+      "Publish a GTM workspace to the live environment",
+      {
+        workspacePath: z.string().describe("Workspace path (e.g., accounts/123/containers/456/workspaces/7)"),
+      },
+      async ({ workspacePath }: any) => {
+        const res = await safeCall(() => (tagmanager.accounts.containers.workspaces as any).publish({
+          path: workspacePath,
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error publishing: ${res.error}` }] };
+        
+        return { content: [{ type: "text", text: `Successfully published workspace: ${workspacePath}\nVersion: ${res.data.containerVersion?.name || 'New Version'}` }] };
+      }
+    );
+
+    server.tool(
+      "verify_gtm_container",
+      "Verify GTM setup by listing containers",
+      {},
+      async () => {
+        const res = await safeCall(() => tagmanager.accounts.list());
+        if (res.error) {
+          return { content: [{ type: "text", text: "Not verified: No GTM container access or export was available. Requires GTM API integration." }] };
+        }
+        const accounts = res.data.account || [];
+        if (accounts.length === 0) {
+          return { content: [{ type: "text", text: "Not verified: No GTM accounts found." }] };
+        }
+        return { content: [{ type: "text", text: `Verified: Found ${accounts.length} GTM Account(s). Use gtm_list_containers for details.` }] };
       }
     );
 
@@ -340,13 +435,13 @@ const handler = createMcpHandler(
         dimensions: z.array(z.string()).optional().default(["date"]),
         limit: z.number().optional().default(50),
       },
-      async ({ propertyId, startDate, endDate, metrics, dimensions, limit }) => {
+      async ({ propertyId, startDate, endDate, metrics, dimensions, limit }: any) => {
         const res = await safeCall(() => analyticsData.properties.runReport({
           property: `properties/${propertyId}`,
           requestBody: {
             dateRanges: [{ startDate, endDate }],
-            metrics: metrics.map((name) => ({ name })),
-            dimensions: dimensions?.map((name) => ({ name })),
+            metrics: metrics.map((name: string) => ({ name })),
+            dimensions: dimensions?.map((name: string) => ({ name })),
             limit: limit.toString(),
           },
         }));
@@ -358,7 +453,6 @@ const handler = createMcpHandler(
       }
     );
 
-    // NEW TOOL: Traffic Sources
     server.tool(
       "ga4_traffic_sources",
       "Get GA4 traffic sources (where users are coming from)",
@@ -367,7 +461,7 @@ const handler = createMcpHandler(
         startDate: z.string().describe("YYYY-MM-DD or 7daysAgo"),
         endDate: z.string().describe("YYYY-MM-DD or today"),
       },
-      async ({ propertyId, startDate, endDate }) => {
+      async ({ propertyId, startDate, endDate }: any) => {
         const res = await safeCall(() => analyticsData.properties.runReport({
           property: `properties/${propertyId}`,
           requestBody: {
@@ -381,7 +475,6 @@ const handler = createMcpHandler(
       }
     );
 
-    // NEW TOOL: Top Performing Pages
     server.tool(
       "ga4_top_pages",
       "Get GA4 top performing pages/landing pages",
@@ -391,7 +484,7 @@ const handler = createMcpHandler(
         endDate: z.string().describe("YYYY-MM-DD or today"),
         limit: z.number().optional().default(10),
       },
-      async ({ propertyId, startDate, endDate, limit }) => {
+      async ({ propertyId, startDate, endDate, limit }: any) => {
         const res = await safeCall(() => analyticsData.properties.runReport({
           property: `properties/${propertyId}`,
           requestBody: {
@@ -413,7 +506,7 @@ const handler = createMcpHandler(
       {
         propertyId: z.string().describe("GA4 Property ID (numbers only)"),
       },
-      async ({ propertyId }) => {
+      async ({ propertyId }: any) => {
         const res = await safeCall(() => analyticsData.properties.runRealtimeReport({
           property: `properties/${propertyId}`,
           requestBody: {
@@ -435,7 +528,7 @@ const handler = createMcpHandler(
         propertyId: z.string().describe("GA4 Property ID (numbers only)"),
         days: z.number().default(28),
       },
-      async ({ propertyId, days }) => {
+      async ({ propertyId, days }: any) => {
         const end = new Date();
         const start = new Date();
         start.setDate(end.getDate() - days);
@@ -482,31 +575,16 @@ const handler = createMcpHandler(
         const currUsers = getValue(current, 1);
         const prevUsers = getValue(previous, 1);
 
-        const sessionsChange =
-          prevSessions === 0 ? "N/A" : (((currSessions - prevSessions) / prevSessions) * 100).toFixed(1) + "%";
-        const usersChange =
-          prevUsers === 0 ? "N/A" : (((currUsers - prevUsers) / prevUsers) * 100).toFixed(1) + "%";
-
+        const sessionsChange = prevSessions === 0 ? "N/A" : (((currSessions - prevSessions) / prevSessions) * 100).toFixed(1) + "%";
+        const usersChange = prevUsers === 0 ? "N/A" : (((currUsers - prevUsers) / prevUsers) * 100).toFixed(1) + "%";
         const trend = Number(sessionsChange) > 0 ? "UP ↑" : Number(sessionsChange) < 0 ? "DOWN ↓" : "STABLE →";
 
-        const report = `# GA4 Client Report
+        const report = `# GA4 Client Report\n\n**Property ID:** ${propertyId}\n**Period:** Last ${days} days vs previous ${days} days\n\n## Performance Trend\n- **Sessions:** ${currSessions.toLocaleString()} (${sessionsChange})\n- **Users:** ${currUsers.toLocaleString()} (${usersChange})\n- **Trend:** ${trend}\n`;
 
-**Property ID:** ${propertyId}
-**Period:** Last ${days} days vs previous ${days} days
-
-## Performance Trend
-- **Sessions:** ${currSessions.toLocaleString()} (${sessionsChange})
-- **Users:** ${currUsers.toLocaleString()} (${usersChange})
-- **Trend:** ${trend}
-`;
-
-        return {
-          content: [{ type: "text", text: report }],
-        };
+        return { content: [{ type: "text", text: report }] };
       }
     );
 
-    // NEW TOOL: Combined SEO Health Report
     server.tool(
       "get_seo_health_overview",
       "Generates a combined SEO health overview combining GSC clicks and GA4 sessions for a specific property.",
@@ -515,7 +593,7 @@ const handler = createMcpHandler(
         propertyId: z.string().describe("GA4 Property ID"),
         days: z.number().default(7),
       },
-      async ({ siteUrl, propertyId, days }) => {
+      async ({ siteUrl, propertyId, days }: any) => {
         const end = new Date();
         const start = new Date();
         start.setDate(end.getDate() - days);

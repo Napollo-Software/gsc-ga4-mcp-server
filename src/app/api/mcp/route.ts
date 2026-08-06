@@ -409,6 +409,27 @@ const handler = createMcpHandler(
       return { content: [{ type: "text", text: JSON.stringify(res.data.rows || [], null, 2) }] };
     });
 
+    server.tool("ga4_metadata", "Return supported dimensions and metrics for a GA4 property to validate requests before running", {trackingId: z.string().describe("REQUIRED: The tracking ID."), propertyId: z.string().describe("GA4 Property ID (numbers only)")}, async ({ trackingId, propertyId }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        const res = await safeCall(() => analyticsData.properties.getMetadata({ name: `properties/${propertyId}/metadata`
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+      }
+    );
+
+    server.tool("gsc_hourly_performance", "Identify the exact hour or point when a sudden search change started", { trackingId: z.string().describe("REQUIRED: The tracking ID.") }, async ({ trackingId }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        return { content: [{ type: "text", text: "The Google Search Console API does not expose historical hourly performance data programmatically. Please ask the user for a screenshot of the GSC hourly performance graph if needed." }] };
+      }
+    );
+
+    server.tool("gsc_change_history", "Identify when GSC settings, sitemaps, users, or property changes occurred", { trackingId: z.string().describe("REQUIRED: The tracking ID.") }, async ({ trackingId }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        return { content: [{ type: "text", text: "The Google Search Console API does not provide a historical audit log of configuration changes. Please ask the user to manually verify this." }] };
+      }
+    );
+
     server.tool("ga4_top_pages", "Get GA4 Top Pages", { trackingId: z.string(), propertyId: z.string(), startDate: z.string(), endDate: z.string(), limit: z.number().optional().default(10) }, async ({ trackingId, propertyId, startDate, endDate, limit }: any) => {
       const authError = checkAuth(trackingId); if (authError) return authError;
       const res = await safeCall(() => analyticsData.properties.runReport({

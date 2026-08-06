@@ -34,6 +34,12 @@ const tagmanager = google.tagmanager({
   auth: oauth2Client,
 });
 
+// ========== BIGQUERY ==========
+const bigquery = google.bigquery({
+  version: "v2",
+  auth: oauth2Client,
+});
+
 // Helper function for safe API calls
 const safeCall = async (fn: () => Promise<any>): Promise<any> => {
   try {
@@ -53,7 +59,154 @@ const checkAuth = (code: string) => {
 
 const handler = createMcpHandler(
   (server: any) => {
-    // ==================== GSC TOOLS ====================
+    
+    // ==================== NEW ADVANCED EXPERT TOOLS ====================
+
+    // 1. API Limitations Context
+    server.tool(
+      "get_api_limitations_context",
+      "Explains GSC API limits for Page Indexing, Crawl Stats, and Manual Actions",
+      { trackingId: z.string().describe("REQUIRED: The tracking ID.") },
+      async ({ trackingId }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        return { content: [{ type: "text", text: "The Google Search Console API does NOT provide endpoints for: 1) Page Indexing categories (Crawled not indexed, etc.), 2) Crawl Stats, 3) Manual Actions/Security Issues. To include this in the report, the user MUST provide screenshots or manual exports. Do NOT say 'Data unavailable', state that 'GSC API does not support this endpoint, manual verification required'." }] };
+      }
+    );
+
+    // 2. Advanced GA4 Reporting
+    server.tool(
+      "ga4_advanced_report",
+      "Run a complex GA4 report with dimension/metric filters, multiple date ranges, and sorting",
+      {
+        trackingId: z.string().describe("REQUIRED: The tracking ID."),
+        propertyId: z.string(),
+        dateRanges: z.array(z.object({ startDate: z.string(), endDate: z.string() })).describe("Array of date ranges, e.g., [{startDate: '7daysAgo', endDate: 'yesterday'}]"),
+        metrics: z.array(z.string()),
+        dimensions: z.array(z.string()).optional(),
+        dimensionFilter: z.any().optional().describe("JSON object for dimension filtering, e.g., {filter: {fieldName: 'sessionDefaultChannelGroup', stringFilter: {matchType: 'EXACT', value: 'Organic Search'}}}"),
+        metricFilter: z.any().optional(),
+        orderBys: z.any().optional().describe("JSON array for sorting, e.g., [{metric: {metricName: 'sessions'}, desc: true}]"),
+        limit: z.number().optional().default(100),
+        offset: z.number().optional().default(0)
+      },
+      async ({ trackingId, propertyId, dateRanges, metrics, dimensions, dimensionFilter, metricFilter, orderBys, limit, offset }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        const res = await safeCall(() => analyticsData.properties.runReport({
+          property: `properties/${propertyId}`,
+          requestBody: {
+            dateRanges, 
+            metrics: metrics.map((n: string) => ({ name: n })),
+            dimensions: dimensions?.map((n: string) => ({ name: n })),
+            dimensionFilter, 
+            metricFilter, 
+            orderBys, 
+            limit: limit.toString(), 
+            offset: offset.toString()
+          }
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+      }
+    );
+
+    // 3. Server & CDN Log Analysis (Cloudflare)
+    server.tool(
+      "get_cloudflare_logs",
+      "Fetch Cloudflare/CDN logs to detect bots, scrapers, and abnormal traffic patterns",
+      {
+        trackingId: z.string().describe("REQUIRED: The tracking ID."),
+        zoneId: z.string().describe("Cloudflare Zone ID"),
+        startTime: z.string().describe("ISO Timestamp e.g., 2026-08-01T00:00:00Z"),
+        endTime: z.string().describe("ISO Timestamp e.g., 2026-08-05T23:59:59Z"),
+        limit: z.number().optional().default(100)
+      },
+      async ({ trackingId, zoneId, startTime, endTime, limit }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        const cfToken = process.env.CLOUDFLARE_API_TOKEN;
+        if (!cfToken) return { content: [{ type: "text", text: "Cloudflare API Token missing in server env." }] };
+
+        const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/logs/received?start=${startTime}&end=${endTime}&limit=${limit}`;
+        const res = await safeCall(() => fetch(url, { headers: { "Authorization": `Bearer ${cfToken}` } }));
+        if (!res.ok) return { content: [{ type: "text", text: `CF API Error: ${res.status}` }] };
+        
+        const logs = await res.json();
+        return { content: [{ type: "text", text: JSON.stringify(logs, null, 2) }] };
+      }
+    );
+
+    // 4. GA4 BigQuery Raw Event Tool
+    server.tool(
+      "bigquery_run_ga4_query",
+      "Query GA4 BigQuery raw event data for deep session and bot analysis",
+      {
+        trackingId: z.string().describe("REQUIRED: The tracking ID."),
+        projectId: z.string().describe("GCP Project ID"),
+        query: z.string().describe("Standard SQL query to run against BigQuery GA4 dataset")
+      },
+      async ({ trackingId, projectId, query }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        const res = await safeCall(() => bigquery.jobs.query({
+          projectId,
+          requestBody: { query, useLegacySql: false }
+        }));
+        if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
+        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+      }
+    );
+
+    // 5. Historical Website Change Tracker
+    server.tool(
+      "extract_page_seo_elements",
+      "Fetches live HTML of a page and extracts SEO elements (Title, H1, Meta, Canonical, Schema) to compare with historical data",
+      {
+        trackingId: z.string().describe("REQUIRED: The tracking ID."),
+        url: z.string().describe("URL of the page to analyze")
+      },
+      async ({ trackingId, url }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        const res = await safeCall(() => fetch(url));
+        if (!res.ok) return { content: [{ type: "text", text: `Error fetching URL: ${res.status}` }] };
+        
+        const html = await res.text();
+        const elements = {
+          title: html.match(/<title>(.*?)<\/title>/i)?.[1] || "Not Found",
+          metaDescription: html.match(/<meta name="description" content="(.*?)"/i)?.[1] || "Not Found",
+          h1: html.match(/<h1[^>]*>(.*?)<\/h1>/i)?.[1] || "Not Found",
+          canonical: html.match(/<link rel="canonical" href="(.*?)"/i)?.[1] || "Not Found",
+          robotsTag: html.match(/<meta name="robots" content="(.*?)"/i)?.[1] || "Not Found",
+          wordCount: html.split(' ').length,
+          schemaPresent: html.includes('application/ld+json')
+        };
+        return { content: [{ type: "text", text: JSON.stringify(elements, null, 2) }] };
+      }
+    );
+
+    // 6. CMS / WordPress Change Log
+    server.tool(
+      "get_wordpress_revisions",
+      "Fetches recent page/post revisions from WordPress REST API to track content changes",
+      {
+        trackingId: z.string().describe("REQUIRED: The tracking ID."),
+        wpBaseUrl: z.string().describe("Base URL of the WordPress site, e.g., https://flooringoutletandmore.com")
+      },
+      async ({ trackingId, wpBaseUrl }: any) => {
+        const authError = checkAuth(trackingId); if (authError) return authError;
+        const url = `${wpBaseUrl}/wp-json/wp/v2/pages?_embed&per_page=10&orderby=modified&order=desc`;
+        const res = await safeCall(() => fetch(url));
+        if (!res.ok) return { content: [{ type: "text", text: `Error fetching WP API: ${res.status}` }] };
+        
+        const pages = await res.json();
+        const recentChanges = pages.map((p: any) => ({
+          title: p.title.rendered,
+          modifiedDate: p.modified,
+          link: p.link,
+          author: p._embedded?.author?.[0]?.name || "Unknown"
+        }));
+        return { content: [{ type: "text", text: JSON.stringify(recentChanges, null, 2) }] };
+      }
+    );
+
+    // ==================== GSC TOOLS (EXISTING) ====================
 
     server.tool(
       "gsc_list_sites",
@@ -67,7 +220,9 @@ const handler = createMcpHandler(
 
         const res = await safeCall(() => searchconsole.sites.list());
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return { content: [{ type: "text", text: JSON.stringify(res.data.siteEntry || [], null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(res.data.siteEntry || [], null, 2) }],
+        };
       }
     );
 
@@ -91,7 +246,9 @@ const handler = createMcpHandler(
           requestBody: { startDate, endDate, dimensions, rowLimit },
         }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
+        };
       }
     );
 
@@ -108,7 +265,9 @@ const handler = createMcpHandler(
 
         const res = await safeCall(() => searchconsole.sitemaps.list({ siteUrl }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
+        };
       }
     );
 
@@ -128,7 +287,9 @@ const handler = createMcpHandler(
           requestBody: { inspectionUrl, siteUrl },
         }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
+        };
       }
     );
 
@@ -186,7 +347,9 @@ const handler = createMcpHandler(
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
         
         const indexStatus = res.data.inspectionResult?.indexStatusResult;
-        return { content: [{ type: "text", text: `Indexing requested for: ${inspectionUrl}\nCurrent Status: ${JSON.stringify(indexStatus, null, 2)}` }] };
+        return {
+          content: [{ type: "text", text: `Indexing requested for: ${inspectionUrl}\nCurrent Status: ${JSON.stringify(indexStatus, null, 2)}` }],
+        };
       }
     );
 
@@ -233,7 +396,7 @@ const handler = createMcpHandler(
       }
     );
 
-    // ==================== TRACKING VERIFICATION TOOLS ====================
+    // ==================== TRACKING VERIFICATION TOOLS (EXISTING) ====================
 
     server.tool(
       "verify_ga4_tracking_config",
@@ -294,7 +457,7 @@ const handler = createMcpHandler(
       }
     );
 
-    // ==================== GA4 USERS LIST TOOL ====================
+    // ==================== GA4 USERS LIST TOOL (EXISTING) ====================
     server.tool(
       "ga4_list_users",
       "List all users and their roles for a GA4 Account or Property",
@@ -331,7 +494,7 @@ const handler = createMcpHandler(
       }
     );
 
-    // ==================== GTM TOOLS ====================
+    // ==================== GTM TOOLS (EXISTING) ====================
     
     server.tool(
       "gtm_list_containers",
@@ -418,7 +581,7 @@ const handler = createMcpHandler(
       }
     );
 
-    // ==================== GA4 TOOLS ====================
+    // ==================== GA4 TOOLS (EXISTING) ====================
 
     server.tool(
       "ga4_list_properties",
@@ -432,7 +595,9 @@ const handler = createMcpHandler(
 
         const res = await safeCall(() => analyticsAdmin.accountSummaries.list());
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return { content: [{ type: "text", text: JSON.stringify(res.data.accountSummaries || [], null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(res.data.accountSummaries || [], null, 2) }],
+        };
       }
     );
 
@@ -463,7 +628,9 @@ const handler = createMcpHandler(
         }));
 
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
+        };
       }
     );
 
@@ -541,7 +708,9 @@ const handler = createMcpHandler(
           },
         }));
         if (res.error) return { content: [{ type: "text", text: `Error: ${res.error}` }] };
-        return { content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
+        };
       }
     );
 
@@ -571,15 +740,32 @@ const handler = createMcpHandler(
         const [current, previous] = await Promise.all([
           safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
-            requestBody: { dateRanges: [{ startDate: format(start), endDate: format(end) }], metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "screenPageViews" }, { name: "bounceRate" }] },
+            requestBody: {
+              dateRanges: [{ startDate: format(start), endDate: format(end) }],
+              metrics: [
+                { name: "sessions" },
+                { name: "totalUsers" },
+                { name: "screenPageViews" },
+                { name: "bounceRate" },
+              ],
+            },
           })),
           safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
-            requestBody: { dateRanges: [{ startDate: format(prevStart), endDate: format(prevEnd) }], metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "screenPageViews" }, { name: "bounceRate" }] },
+            requestBody: {
+              dateRanges: [{ startDate: format(prevStart), endDate: format(prevEnd) }],
+              metrics: [
+                { name: "sessions" },
+                { name: "totalUsers" },
+                { name: "screenPageViews" },
+                { name: "bounceRate" },
+              ],
+            },
           })),
         ]);
 
-        const getValue = (report: any, index: number) => Number(report?.data?.rows?.[0]?.metricValues?.[index]?.value || 0);
+        const getValue = (report: any, index: number) =>
+          Number(report?.data?.rows?.[0]?.metricValues?.[index]?.value || 0);
 
         const currSessions = getValue(current, 0);
         const prevSessions = getValue(previous, 0);
@@ -592,7 +778,9 @@ const handler = createMcpHandler(
 
         const report = `# GA4 Client Report\n\n**Property ID:** ${propertyId}\n**Period:** Last ${days} days vs previous ${days} days\n\n## Performance Trend\n- **Sessions:** ${currSessions.toLocaleString()} (${sessionsChange})\n- **Users:** ${currUsers.toLocaleString()} (${usersChange})\n- **Trend:** ${trend}\n`;
 
-        return { content: [{ type: "text", text: report }] };
+        return {
+          content: [{ type: "text", text: report }],
+        };
       }
     );
 
@@ -615,10 +803,16 @@ const handler = createMcpHandler(
         const format = (d: Date) => d.toISOString().split("T")[0];
 
         const [gscRes, ga4Res] = await Promise.all([
-          safeCall(() => searchconsole.searchanalytics.query({ siteUrl, requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] } })),
+          safeCall(() => searchconsole.searchanalytics.query({ 
+            siteUrl, 
+            requestBody: { startDate: format(start), endDate: format(end), dimensions: ["date"] } 
+          })),
           safeCall(() => analyticsData.properties.runReport({
             property: `properties/${propertyId}`,
-            requestBody: { dateRanges: [{ startDate: format(start), endDate: format(end) }], metrics: [{ name: "sessions" }, { name: "totalUsers" }] },
+            requestBody: {
+              dateRanges: [{ startDate: format(start), endDate: format(end) }],
+              metrics: [{ name: "sessions" }, { name: "totalUsers" }],
+            },
           }))
         ]);
 
